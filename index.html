@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Gửi Phùn❤️</title>
+<style>
+  :root{
+    --bg1:#06070b; --bg2:#141726;
+    --pink:#ff3b7f; --glow:#ff9fcf; --spark:#ffd1e8; --aura:#ff4f92;
+  }
+  html,body{height:100%;margin:0;overflow:hidden;background:radial-gradient(1200px 700px at 50% 50%, var(--bg2) 0%, var(--bg1) 60%);color:#eaeaea;font-family:Inter,system-ui,Arial}
+  canvas{position:fixed;inset:0}
+  .hint{position:fixed;right:16px;bottom:16px;z-index:10;opacity:.65;font-size:12px}
+</style>
+</head>
+<body>
+  <div class="hint">Hành động thả thính được thực hiện bởi chuyên gia IT, Gửi Phùn❤️</div>
+  <canvas id="c"></canvas>
+<script>
+/* ===================== CONFIG ===================== */
+const CFG = {
+  heartScale: 17,            // kích thước tim
+  ringCount: 2200,           // số hạt viền tim
+  innerSparkBase: 120,       // tốc độ sparkle bên trong
+  innerSparkBoost: 320,      // tăng tốc theo beat
+  outerSparkBase: 110,       // tốc độ sparkle bên ngoài
+  outerSparkBoost: 280,      // tăng tốc theo beat
+  bgTwinkleCount: 220,       // số đốm twinkle nền
+  auraPulse: 0.42,           // cường độ aura nền
+  beatCooldownMs: 100,       // thời gian nghỉ giữa beat
+  beatScaleGain: 0.20,       // độ phồng theo beat
+  levelScaleGain: 0.12,      // độ phồng theo mức bass
+  jitterBase: 1.4,           // rung cơ bản của hạt viền
+  jitterLevelGain: 0.65,     // rung tăng theo bass
+  jitterBeatGain: 1.05,      // rung tăng theo beat
+  hueBase: 335,              // màu hồng cơ sở
+  hueRange: 30,              // biên độ đổi màu
+  sparkMax: 1200,            // số sparkle tối đa
+  trailFade: 0.14            // mức mờ để tạo vệt (0..1)
+};
+/* ================================================== */
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+function fit(){ canvas.width = innerWidth; canvas.height = innerHeight; }
+addEventListener('resize', fit); fit();
+
+/* ====== AUDIO: cố gắng autoplay không nút ====== */
+let audioCtx, analyser, dataArray, audioEl, srcNode, playing=false;
+async function tryPlay(){
+  try{
+    await audioEl.play();
+    if(audioCtx.state==='suspended') await audioCtx.resume();
+    playing = true;
+  }catch(e){ /* bị chặn */ }
+}
+async function setupAudio(){
+  audioEl = new Audio('music.mp3');
+  audioEl.loop = true;
+  audioEl.playsInline = true;
+  audioEl.muted = false;      // đảm bảo không bị mute
+  audioEl.volume = 0.9;
+  audioEl.crossOrigin = 'anonymous';
+
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  analyser = audioCtx.createAnalyser(); analyser.fftSize = 2048;
+  dataArray = new Uint8Array(analyser.frequencyBinCount);
+  srcNode = audioCtx.createMediaElementSource(audioEl);
+  srcNode.connect(analyser); analyser.connect(audioCtx.destination);
+
+  await tryPlay();
+  // Nếu vẫn bị chặn, tự thử lại khi có tương tác/tab hiển thị – không hiện nút
+  const kick = async ()=>{ await tryPlay(); if(playing) removeKick(); };
+  function removeKick(){
+    document.removeEventListener('pointerdown', kick);
+    document.removeEventListener('keydown', kick);
+    document.removeEventListener('visibilitychange', kick);
+  }
+  if(!playing){
+    document.addEventListener('pointerdown', kick);
+    document.addEventListener('keydown', kick);
+    document.addEventListener('visibilitychange', kick);
+    setTimeout(kick, 1500); // thử lại nhẹ sau 1.5s (mobile)
+  }
+}
+setupAudio();
+
+/* ====== GEOMETRY ====== */
+function heartXY(t){
+  const a = t * Math.PI * 2;
+  const x = 16 * Math.pow(Math.sin(a), 3);
+  const y = -(13*Math.cos(a) - 5*Math.cos(2*a) - 2*Math.cos(3*a) - Math.cos(4*a));
+  return [x * CFG.heartScale, y * CFG.heartScale];
+}
+const cx = ()=>canvas.width/2, cy = ()=>canvas.height/2;
+let ring = [];
+function resetRing(){
+  ring = []; const N = CFG.ringCount;
+  for(let i=0;i<N;i++){
+    const t = i/N; const [hx,hy] = heartXY(t);
+    const x = cx()+hx, y = cy()+hy;
+    ring.push({ ox:x, oy:y, x:x, y:y,
+      r: Math.random()*1.9+0.8,
+      a: Math.random()*Math.PI*2,
+      s: Math.random()*1.0+0.7,
+      hue: CFG.hueBase + Math.random()*CFG.hueRange });
+  }
+}
+resetRing(); addEventListener('resize', resetRing);
+
+/* ====== BG TWINKLES (đốm nền) ====== */
+const twinkles = [];
+function resetTwinkles(){
+  twinkles.length = 0;
+  const n = CFG.bgTwinkleCount;
+  for(let i=0;i<n;i++){
+    twinkles.push({
+      x: Math.random()*canvas.width,
+      y: Math.random()*canvas.height,
+      r: Math.random()*2.2 + 0.8,
+      hue: CFG.hueBase + Math.random()*CFG.hueRange,
+      phase: Math.random()*Math.PI*2
+    });
+  }
+}
+resetTwinkles(); addEventListener('resize', resetTwinkles);
+
+/* ====== SPARKLES ====== */
+const sparks = [];
+function spawnInner(n){
+  for(let i=0;i<n;i++){
+    const t = Math.random();
+    const [hx,hy] = heartXY(t);
+    const x = cx()+hx+(Math.random()-0.5)*12;
+    const y = cy()+hy+(Math.random()-0.5)*12;
+    sparks.push({type:'inner', x,y,
+      r: Math.random()*2.8+1.3,
+      life: 0,
+      max: 520 + Math.random()*880,
+      rot: Math.random()*Math.PI*2,
+      hue: CFG.hueBase + Math.random()*CFG.hueRange,
+      star: Math.random()<0.6});
+    if(sparks.length > CFG.sparkMax) sparks.shift();
+  }
+}
+function spawnOuter(n){
+  const R = Math.max(canvas.width,canvas.height)/2*0.92;
+  for(let i=0;i<n;i++){
+    const ang = Math.random()*Math.PI*2;
+    const x = cx()+Math.cos(ang)*R*(0.94+Math.random()*0.06);
+    const y = cy()+Math.sin(ang)*R*(0.94+Math.random()*0.06);
+    sparks.push({type:'outer', x,y,
+      r: Math.random()*3.4+1.9,
+      life: 0,
+      max: 640 + Math.random()*960,
+      rot: Math.random()*Math.PI*2,
+      hue: CFG.hueBase + Math.random()*CFG.hueRange,
+      star: Math.random()<0.45});
+    if(sparks.length > CFG.sparkMax) sparks.shift();
+  }
+}
+function drawStar(x,y,r,rot,color,alpha){
+  const spikes=5, outer=r, inner=r*0.45;
+  ctx.save(); ctx.translate(x,y); ctx.rotate(rot);
+  ctx.beginPath();
+  for(let i=0;i<spikes*2;i++){
+    const ang=i*Math.PI/spikes;
+    const rr=(i%2===0)?outer:inner;
+    const px=Math.cos(ang)*rr, py=Math.sin(ang)*rr;
+    if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+  }
+  ctx.closePath();
+  ctx.fillStyle = `hsla(${color},95%,70%,${alpha})`;
+  ctx.shadowColor = `hsla(${color},95%,70%,${alpha})`;
+  ctx.shadowBlur = r*3.2;
+  ctx.fill();
+  ctx.restore();
+}
+
+/* ====== BEAT DETECTION ====== */
+let ema=0, beat=0, lastBeat=0;
+function bassLevel(){
+  if(!analyser) return 0;
+  analyser.getByteFrequencyData(dataArray);
+  const sampleRate = audioCtx?audioCtx.sampleRate:44100;
+  const binHz = sampleRate / analyser.fftSize;
+  const hi = Math.min(dataArray.length-1, Math.floor(200/binHz));
+  let sum=0, cnt=0; for(let i=1;i<=hi;i++){ sum+=dataArray[i]; cnt++; }
+  return cnt? (sum/cnt)/255 : 0;
+}
+
+/* ====== RENDER LOOP ====== */
+let tPrev = performance.now();
+function render(t){
+  const dt = Math.min(32, t - tPrev); tPrev = t;
+  // Lớp mờ nhẹ để tạo vệt (trail)
+  ctx.fillStyle = `rgba(7,8,12,${CFG.trailFade})`;
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // Âm lượng/beat
+  let level = 0;
+  if(playing && analyser){
+    level = bassLevel();
+    const alpha = 0.25;
+    ema = ema*(1-alpha) + level*alpha;
+    const thr = Math.max(0.20, ema*1.16);
+    if(level>thr && (t-lastBeat)>CFG.beatCooldownMs){ beat = 1.0; lastBeat = t; }
+  }
+  beat *= 0.92; // decay
+
+  // Aura nền hồng đậm, "hô hấp" theo beat
+  const aura = CFG.auraPulse*(0.6 + level*0.6 + beat*1.0);
+  const grd = ctx.createRadialGradient(cx(),cy(),0,cx(),cy(),Math.max(canvas.width,canvas.height)/2);
+  grd.addColorStop(0, `hsla(${CFG.hueBase+10},95%,60%,${0.20 + aura})`);
+  grd.addColorStop(1, `rgba(6,7,11,1)`);
+  ctx.fillStyle = grd; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // Viền tim – dày và sáng hơn, phồng theo beat
+  const scale = 1 + beat*CFG.beatScaleGain + level*CFG.levelScaleGain;
+  ctx.globalCompositeOperation = 'lighter';
+  for(const p of ring){
+    p.a += 0.02 + level*0.05;
+    const jitter = (Math.sin(p.a)*CFG.jitterBase + Math.cos(p.a*1.7)*CFG.jitterBase*0.75)
+                   * p.s * (1 + beat*CFG.jitterBeatGain + level*CFG.jitterLevelGain);
+    p.x = cx() + (p.ox - cx())*scale + jitter;
+    p.y = cy() + (p.oy - cy())*scale + jitter;
+    const r = p.r*(1 + level*0.65 + beat*0.95);
+    const g = ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,r*9.5);
+    g.addColorStop(0, `hsla(${p.hue},95%,67%,0.99)`);
+    g.addColorStop(1, `hsla(${p.hue},95%,67%,0)`);
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill();
+  }
+
+  // Twinkles nền
+  for(const tw of twinkles){
+    tw.phase += 0.015 + level*0.02;
+    const twAlpha = 0.15 + 0.65 * (0.5 + 0.5*Math.sin(tw.phase));
+    const gg = ctx.createRadialGradient(tw.x,tw.y,0,tw.x,tw.y,tw.r*4.5);
+    gg.addColorStop(0, `hsla(${tw.hue},95%,75%,${twAlpha})`);
+    gg.addColorStop(1, `hsla(${tw.hue},95%,75%,0)`);
+    ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(tw.x,tw.y,tw.r,0,Math.PI*2); ctx.fill();
+  }
+
+  // Sinh sparkles trong/ngoài
+  const inRate = CFG.innerSparkBase + beat*CFG.innerSparkBoost;
+  const outRate = CFG.outerSparkBase + beat*CFG.outerSparkBoost;
+  const nIn = Math.floor(inRate * dt/1000), nOut = Math.floor(outRate * dt/1000);
+  spawnInner(nIn); spawnOuter(nOut);
+
+  // Vẽ sparkles
+  for(let i=sparks.length-1;i>=0;i--){
+    const s = sparks[i]; s.life += dt; const tt = s.life/s.max;
+    if(tt>=1){ sparks.splice(i,1); continue; }
+    const tw = 0.6 + 0.4*Math.sin(s.life*0.03 + i*0.5);
+    const alpha = (Math.sin(tt*Math.PI)**1.25) * (0.7 + 0.3*tw) * (0.65 + beat*0.35 + level*0.25);
+    const hue = s.hue;
+    if(s.star){ drawStar(s.x, s.y, s.r*(1+tw*0.9), s.rot, hue, alpha); }
+    else {
+      const gg = ctx.createRadialGradient(s.x,s.y,0,s.x,s.y,s.r*7.2);
+      gg.addColorStop(0, `hsla(${hue},95%,75%,${alpha})`);
+      gg.addColorStop(1, `hsla(${hue},95%,75%,0)`);
+      ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(s.x,s.y,s.r*(1+0.9*tw),0,Math.PI*2); ctx.fill();
+    }
+  }
+
+  ctx.globalCompositeOperation = 'source-over';
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
